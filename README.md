@@ -92,13 +92,26 @@ The dangerous failure here is not a crash. It is a backtest that looks great bec
 
 ## How to run
 
+The notebook ships with the `turing-college` kernel selected. Install the package into that environment once:
+
 ```bash
+conda activate turing-college
 cd "Module 3/Sprint 4"
-uv sync --extra dev          # builds .venv from uv.lock
+pip install -e .             # installs nvda_rl and its dependencies
+jupyter lab notebooks/nvda_regimes_rl.ipynb
+```
+
+Without that install the first cell raises `ModuleNotFoundError: No module named 'nvda_rl'`, because the notebook imports the project as a package rather than reaching for files by path.
+
+There is also a uv path, which is what `uv.lock` pins:
+
+```bash
+uv sync --extra dev          # builds .venv from the lockfile
 uv run pytest -q             # 19 tests
 uv run ruff check .          # package, tests, and notebook
-uv run jupyter lab notebooks/nvda_regimes_rl.ipynb
 ```
+
+Both environments give identical results. The conda env runs Python 3.10 with scikit-learn 1.7.2 and the uv env runs 3.12 with 1.9.0, and every figure in this README came out the same on both.
 
 The notebook runs top to bottom. The first run downloads NVDA from yfinance; later runs read the CSV cache, so no network is needed. Everything stochastic is seeded with `RANDOM_SEED = 42`.
 

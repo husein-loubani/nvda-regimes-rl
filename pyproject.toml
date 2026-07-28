@@ -6,9 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "nvda_rl"
 version = "0.1.0"
 description = "NVDA market regimes by unsupervised learning, traded by a reinforcement learning agent"
-# Capped below 3.13: UMAP pulls in numba/llvmlite, whose wheels lag new CPython
-# releases, and an unbuildable dependency is not a reproducible environment.
-requires-python = ">=3.11,<3.13"
+# Floor at 3.10 so the project also installs into the shared turing-college
+# conda environment. Capped below 3.13 because UMAP pulls in numba/llvmlite,
+# whose wheels lag new CPython releases, and an unbuildable dependency is not a
+# reproducible environment.
+requires-python = ">=3.10,<3.13"
 # uv resolves these into uv.lock, which is committed. pyproject declares intent,
 # the lockfile pins the exact versions the reported results came from, so there
 # is no second dependency file to drift out of step.
@@ -44,7 +46,7 @@ include = ["nvda_rl*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
