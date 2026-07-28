@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Tooling caches
+.ruff_cache/
+.pytest_cache/
+.coverage
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Note: data/raw/, reports/figures/, and uv.lock are intentionally tracked so
+# the project is reproducible and self-contained for review.

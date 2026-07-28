@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nvda_rl"
+version = "0.1.0"
+description = "NVDA market regimes by unsupervised learning, traded by a reinforcement learning agent"
+# Capped below 3.13: UMAP pulls in numba/llvmlite, whose wheels lag new CPython
+# releases, and an unbuildable dependency is not a reproducible environment.
+requires-python = ">=3.11,<3.13"
+# uv resolves these into uv.lock, which is committed. pyproject declares intent,
+# the lockfile pins the exact versions the reported results came from, so there
+# is no second dependency file to drift out of step.
+dependencies = [
+    "pandas>=2.3",
+    "numpy>=2.2",
+    "scipy>=1.15",
+    "scikit-learn>=1.7",
+    "statsmodels>=0.14",
+    "yfinance>=1.4",
+    "matplotlib>=3.10",
+    "seaborn>=0.13",
+    "umap-learn>=0.5.7",
+    "hmmlearn>=0.3.3",
+    "phik>=0.12.5",
+    # UMAP reaches numba through pynndescent. Without these floors the resolver
+    # is free to pick a 2021-era llvmlite that has no wheel for this Python and
+    # fails to build from source, so they are pinned to versions that ship one.
+    "numba>=0.61",
+    "llvmlite>=0.44",
+]
+
+[project.optional-dependencies]
+dev = [
+    "jupyterlab>=4.0",
+    "ruff>=0.13",
+    "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nvda_rl*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+ignore = ["E501"]
