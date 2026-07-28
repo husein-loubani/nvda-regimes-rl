@@ -26,9 +26,7 @@ Prices arrive dividend- and split-adjusted (`auto_adjust=True`). This is not cos
 | `volatility_21` | 21-day rolling std of `log_return`, annualized | How violently the market is moving, the strongest regime separator |
 | `momentum_21` | 21-day percentage price change | Whether the market has been trending, and in which direction |
 | `dist_252d_high` | `close / close.rolling(252).max() - 1` | Distance below the yearly high; separates drawdowns from advances |
-| `rsi_14` | Wilder's 14-day relative strength index | Bounded momentum oscillator, reported in EDA |
 | `volume_zscore` | Volume standardized against a rolling 252-day mean and std | Unusual participation; standardized because volume grew structurally |
-| `return_lag_{1,2,3,5}` | Lagged returns | Short-horizon history available to the state |
 | `next_return` | `return.shift(-1)` | The return a position taken today will earn tomorrow |
 | `regime` | K-means cluster label, ordered by mean return | The unsupervised state feature; 0 is the highest-return regime |
 | `*_bin` | Tercile index from train-only quantile edges | Discretization for the tabular Q-table |

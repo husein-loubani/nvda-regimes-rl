@@ -16,19 +16,8 @@ from nvda_rl.config import (
     HIGH_LOOKBACK,
     MOMENTUM_WINDOW,
     REGIME_FEATURES,
-    RETURN_LAGS,
-    RSI_WINDOW,
     VOL_WINDOW,
 )
-
-
-def _rsi(close: pd.Series, window: int = RSI_WINDOW) -> pd.Series:
-    """Wilder's relative strength index, bounded 0-100."""
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1 / window, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1 / window, adjust=False).mean()
-    rs = gain / loss.replace(0, np.nan)
-    return (100 - 100 / (1 + rs)).fillna(50)
 
 
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -46,14 +35,10 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     out["volatility_21"] = out["log_return"].rolling(VOL_WINDOW).std() * np.sqrt(252)
     out["momentum_21"] = out["close"].pct_change(MOMENTUM_WINDOW)
     out["dist_252d_high"] = out["close"] / out["close"].rolling(HIGH_LOOKBACK).max() - 1
-    out["rsi_14"] = _rsi(out["close"])
 
     volume_mean = out["volume"].rolling(HIGH_LOOKBACK).mean()
     volume_std = out["volume"].rolling(HIGH_LOOKBACK).std()
     out["volume_zscore"] = (out["volume"] - volume_mean) / volume_std
-
-    for lag in RETURN_LAGS:
-        out[f"return_lag_{lag}"] = out["return"].shift(lag)
 
     # The environment pays the next day's return for a position taken today, so
     # it is carried as an explicit column rather than recomputed by the agent.
