@@ -11,7 +11,24 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from nvda_rl.config import TRADING_DAYS
+from nvda_rl.config import COST_LEVELS, TRADING_DAYS
+
+
+def sharpe_ratio(net_returns: np.ndarray) -> float:
+    """
+    The project's single Sharpe definition: annualized mean over annualized
+    standard deviation, at a zero risk-free rate.
+
+    Every Sharpe in the project routes through this function. The headline
+    figure previously used compound annual growth over volatility while the
+    rolling chart used mean over standard deviation, so the two were quietly
+    measuring different things and could not be compared.
+    """
+    net = np.asarray(net_returns, dtype=float)
+    sd = net.std(ddof=1)
+    if sd == 0 or np.isnan(sd):
+        return float("nan")
+    return float(net.mean() / sd * np.sqrt(TRADING_DAYS))
 
 
 def performance(ledger: pd.DataFrame, name: str = "policy") -> dict:
@@ -32,10 +49,17 @@ def performance(ledger: pd.DataFrame, name: str = "policy") -> dict:
     total_growth = float(equity[-1])
     ann_return = total_growth ** (TRADING_DAYS / n_days) - 1
     ann_vol = net.std(ddof=1) * np.sqrt(TRADING_DAYS)
-    drawdown = equity / np.maximum.accumulate(equity) - 1
+
+    # Drawdown is measured from a starting capital of 1, so a strategy that
+    # never recovers its initial stake shows the loss rather than hiding it
+    # behind a running peak that begins at the first bar.
+    peak = np.maximum.accumulate(np.concatenate([[1.0], equity]))[1:]
+    drawdown = equity / peak - 1
 
     traded = ledger["turnover"].to_numpy(dtype=float)
-    active = net[ledger["position_held"].to_numpy() != 0]
+    # Hit ratio counts only days the policy actually held a position, so flat
+    # days are neither wins nor losses.
+    active = net[ledger["action"].to_numpy() != 0]
 
     return {
         "policy": name,
@@ -43,12 +67,12 @@ def performance(ledger: pd.DataFrame, name: str = "policy") -> dict:
         "total_growth_x": round(total_growth, 3),
         "ann_return_%": round(ann_return * 100, 2),
         "ann_vol_%": round(ann_vol * 100, 2),
-        "sharpe": round(ann_return / ann_vol, 2) if ann_vol > 0 else np.nan,
+        "sharpe": round(sharpe_ratio(net), 2),
         "max_drawdown_%": round(float(drawdown.min()) * 100, 2),
         # Hit ratio is computed over days with a position on; counting flat days
         # as neither win nor loss keeps it a statement about decisions taken.
         "hit_ratio": round(float((active > 0).mean()), 3) if len(active) else np.nan,
-        "days_in_market_%": round(float((ledger["position_held"] != 0).mean()) * 100, 1),
+        "days_in_market_%": round(float((ledger["action"] != 0).mean()) * 100, 1),
         "turnover_per_year": round(float(traded.sum()) / n_days * TRADING_DAYS, 1),
         "cost_drag_%": round(float((gross.sum() - net.sum()) * 100), 2),
         "days": n_days,
@@ -96,7 +120,7 @@ def regime_action_map(ledger: pd.DataFrame, regime_labels: pd.Series) -> pd.Data
     is decoration.
     """
     joined = ledger.copy()
-    joined["regime"] = regime_labels.to_numpy()[: len(joined)]
+    joined["regime"] = np.asarray(regime_labels)[: len(joined)]
     out = (
         joined.groupby("regime")["action"]
         .value_counts(normalize=True)
@@ -109,3 +133,61 @@ def regime_action_map(ledger: pd.DataFrame, regime_labels: pd.Series) -> pd.Data
         joined.groupby("regime")["net_return"].mean().mul(1e4).round(2)
     )
     return out
+
+
+def cost_sensitivity(
+    frame: pd.DataFrame,
+    state_columns: list[str],
+    policy_fn,
+    cost_levels: tuple = COST_LEVELS,
+    name: str = "policy",
+) -> pd.DataFrame:
+    """
+    Replay one policy across several transaction-cost levels.
+
+    A fixed 10 bps is a defensible starting point, but this strategy trades
+    often enough that slippage, wider spreads, or borrow costs on the short leg
+    could change the conclusion rather than just trim it. Reporting the whole
+    curve shows at what cost the edge disappears, which is more useful than one
+    number plus a caveat in the limitations section.
+    """
+    from nvda_rl.modeling.environment import TradingEnv
+
+    rows = []
+    for cost in cost_levels:
+        ledger = TradingEnv(frame, state_columns, cost=cost).run_policy(policy_fn)
+        stats = performance(ledger, name)
+        rows.append({
+            "cost_bps": round(cost * 1e4, 1),
+            "cumulative_pnl_%": stats["cumulative_pnl_%"],
+            "ann_return_%": stats["ann_return_%"],
+            "sharpe": stats["sharpe"],
+            "max_drawdown_%": stats["max_drawdown_%"],
+            "turnover_per_year": stats["turnover_per_year"],
+        })
+    return pd.DataFrame(rows).set_index("cost_bps")
+
+
+def walk_forward(ledger: pd.DataFrame, name: str = "policy") -> pd.DataFrame:
+    """
+    Break one ledger into calendar years and score each separately.
+
+    A single figure over 2021 to 2026 hides which regime produced it. Year by
+    year shows whether the policy worked repeatedly or was carried by one
+    exceptional stretch, which is the difference between evidence and an
+    anecdote.
+    """
+    rows = []
+    for year, part in ledger.groupby(ledger["date"].dt.year):
+        if len(part) < 20:
+            continue
+        stats = performance(part, name)
+        rows.append({
+            "year": int(year),
+            "days": stats["days"],
+            "return_%": stats["cumulative_pnl_%"],
+            "sharpe": stats["sharpe"],
+            "max_drawdown_%": stats["max_drawdown_%"],
+            "turnover_per_year": stats["turnover_per_year"],
+        })
+    return pd.DataFrame(rows).set_index("year")

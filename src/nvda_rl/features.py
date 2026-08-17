@@ -65,33 +65,39 @@ def regime_matrix(df: pd.DataFrame, columns: list[str] | None = None) -> pd.Data
     return df[columns].copy()
 
 
-def fit_binner(train: pd.DataFrame, columns: list[str], n_bins: int = 3) -> dict[str, np.ndarray]:
+def fit_binner(train: pd.DataFrame, columns: list[str], n_bins: int = 3):
     """
-    Learn quantile bin edges from the training window only.
+    Fit sklearn's KBinsDiscretizer on the training window only.
 
-    Tabular Q-learning needs a finite state space, so continuous features have
-    to be discretized. Computing the quantiles over the full history would let
-    the test period decide what counts as "high volatility", which is a quiet
-    but real leak: the agent would be told where today sits in a distribution
-    that includes days it has not traded yet. Edges are therefore frozen here
-    and reused unchanged on the test window.
+    Tabular Q-learning needs a finite state space, so the continuous features
+    have to be discretized. This used to be hand-rolled with `quantile` plus
+    `np.digitize`; KBinsDiscretizer provides the same fit-on-train,
+    transform-on-test contract as one tested component, and it is consistent
+    with the rest of the pipeline, which is sklearn throughout.
+
+    Fitting on the full history would let the test period decide what counts as
+    "high volatility", which is a quiet but real leak, so the encoder is frozen
+    here and reused unchanged.
     """
-    edges = {}
-    quantiles = np.linspace(0, 1, n_bins + 1)[1:-1]
-    for col in columns:
-        edges[col] = np.unique(train[col].quantile(quantiles).to_numpy())
-    return edges
+    from sklearn.preprocessing import KBinsDiscretizer
+
+    encoder = KBinsDiscretizer(
+        n_bins=n_bins, encode="ordinal", strategy="quantile", subsample=None
+    )
+    encoder.fit(train[columns])
+    return {"encoder": encoder, "columns": list(columns)}
 
 
-def apply_binner(df: pd.DataFrame, edges: dict[str, np.ndarray], suffix: str = "_bin") -> pd.DataFrame:
+def apply_binner(df: pd.DataFrame, binner: dict, suffix: str = "_bin") -> pd.DataFrame:
     """
-    Map continuous columns onto the frozen bins.
+    Map the continuous columns onto the frozen bins.
 
-    Values beyond the training range fall into the outer bins rather than
-    raising, which is the honest behavior: an unprecedented day is still the
+    Values beyond the training range clip into the outer bins rather than
+    raising, which is the honest behaviour: an unprecedented day is still the
     most extreme bin the agent knows about.
     """
     out = df.copy()
-    for col, cuts in edges.items():
-        out[f"{col}{suffix}"] = np.digitize(out[col].to_numpy(), cuts).astype(int)
+    encoded = binner["encoder"].transform(df[binner["columns"]])
+    for i, col in enumerate(binner["columns"]):
+        out[f"{col}{suffix}"] = encoded[:, i].astype(int)
     return out

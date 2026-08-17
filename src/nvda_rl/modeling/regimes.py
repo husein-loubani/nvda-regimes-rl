@@ -24,9 +24,11 @@ from nvda_rl.config import (
     ANOMALY_CONTAMINATION,
     DBSCAN_EPS,
     DBSCAN_MIN_SAMPLES,
+    FORWARD_HORIZONS,
     N_REGIMES,
     PCA_COMPONENTS,
     RANDOM_SEED,
+    REGIME_STABILITY_SEEDS,
 )
 
 
@@ -276,3 +278,109 @@ def detect_anomalies(x_train: pd.DataFrame, x_all: pd.DataFrame,
         "local_outlier_factor": lof.predict(x_scaled),
         "iso_score": iso.score_samples(x_scaled),
     }
+
+
+def forward_regime_profile(
+    df: pd.DataFrame, label_col: str, horizons: tuple = FORWARD_HORIZONS
+) -> pd.DataFrame:
+    """
+    Describe each regime by what happens *after* it is observed.
+
+    The ordinary profile is partly circular: current return is one of the
+    clustering inputs and the labels are then sorted by mean return, so finding
+    a high-return and a low-return regime afterwards is close to guaranteed.
+    This table instead reports forward returns, forward volatility and forward
+    drawdown measured over the days following the label. Those quantities were
+    never shown to the clustering, so they are the honest test of whether a
+    regime carries information a trading decision could use.
+    """
+    out = df[[label_col]].copy()
+    for h in horizons:
+        fwd = df["close"].shift(-h) / df["close"] - 1
+        out[f"fwd_{h}d_return_bps"] = fwd * 1e4
+        out[f"fwd_{h}d_hit_ratio"] = (fwd > 0).astype(float)
+    out["fwd_21d_vol_%"] = (
+        df["return"].shift(-1).rolling(21).std().shift(-20) * np.sqrt(252) * 100
+    )
+    forward_min = df["close"].shift(-1).rolling(21).min().shift(-20)
+    out["fwd_21d_drawdown_%"] = (forward_min / df["close"] - 1) * 100
+
+    agg = out.groupby(label_col).mean().round(2)
+    agg.insert(0, "days", out.groupby(label_col).size())
+    return agg
+
+
+def regime_stability(
+    x_train: pd.DataFrame,
+    train_returns: np.ndarray,
+    n_regimes: int = N_REGIMES,
+    n_seeds: int = REGIME_STABILITY_SEEDS,
+) -> pd.DataFrame:
+    """
+    Re-fit K-means under many seeds and measure how often the same days end up
+    together, using the adjusted Rand index against the reference labelling.
+
+    A silhouette score says the clusters are geometrically tidy; it says nothing
+    about whether they would survive a slightly different sample. If the labels
+    move around under reseeding, a regime is a poor state variable no matter how
+    clean it looks, because the agent would be conditioning on an accident of
+    initialisation.
+    """
+    from sklearn.metrics import adjusted_rand_score
+
+    reference = assign_regimes(fit_kmeans_regimes(x_train, train_returns, n_regimes), x_train)
+    scores = []
+    for seed in range(1, n_seeds + 1):
+        pipe = Pipeline([
+            ("scale", StandardScaler()),
+            ("kmeans", KMeans(n_clusters=n_regimes, random_state=seed, n_init=10)),
+        ]).fit(x_train)
+        labels = pipe.named_steps["kmeans"].labels_
+        mapping = _order_by_mean_return(labels, train_returns)
+        relabelled = np.array([mapping[x] for x in labels])
+        scores.append(adjusted_rand_score(reference, relabelled))
+
+    scores = np.array(scores)
+    return pd.DataFrame([{
+        "seeds": n_seeds,
+        "mean_ARI": round(float(scores.mean()), 4),
+        "min_ARI": round(float(scores.min()), 4),
+        "std_ARI": round(float(scores.std()), 4),
+        "share_above_0.9": round(float((scores > 0.9).mean()), 3),
+    }])
+
+
+def bootstrap_stability(
+    x_train: pd.DataFrame,
+    train_returns: np.ndarray,
+    n_regimes: int = N_REGIMES,
+    n_boot: int = 20,
+    seed: int = RANDOM_SEED,
+) -> pd.DataFrame:
+    """
+    The harder version of the same question: refit on bootstrap resamples and
+    score agreement on the overlapping days. Reseeding only perturbs the
+    initialisation, while resampling perturbs the data itself, which is closer
+    to what happens when new months of history arrive.
+    """
+    from sklearn.metrics import adjusted_rand_score
+
+    rng = np.random.default_rng(seed)
+    reference_model = fit_kmeans_regimes(x_train, train_returns, n_regimes)
+    reference = assign_regimes(reference_model, x_train)
+
+    scores = []
+    n = len(x_train)
+    for _ in range(n_boot):
+        idx = rng.choice(n, size=n, replace=True)
+        sample = x_train.iloc[idx]
+        model = fit_kmeans_regimes(sample, train_returns[idx], n_regimes)
+        scores.append(adjusted_rand_score(reference, assign_regimes(model, x_train)))
+
+    scores = np.array(scores)
+    return pd.DataFrame([{
+        "bootstraps": n_boot,
+        "mean_ARI": round(float(scores.mean()), 4),
+        "min_ARI": round(float(scores.min()), 4),
+        "std_ARI": round(float(scores.std()), 4),
+    }])

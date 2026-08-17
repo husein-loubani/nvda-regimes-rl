@@ -14,7 +14,12 @@ START_DATE = "2010-01-01"
 # regime label fitted on data the agent has not lived through yet is the same
 # leak wearing a different hat, so the unsupervised models are fitted on the
 # training window only.
-SPLIT_DATE = "2021-01-01"
+# Three chronological windows. Hyperparameters (learning rate, episode count,
+# bin count, number of regimes) are chosen on validation and the test window is
+# opened once, at the end. Picking them on test would make the final number a
+# training score wearing a disguise.
+VALIDATION_DATE = "2019-01-01"   # train < this
+SPLIT_DATE = "2021-01-01"        # validation is [VALIDATION_DATE, SPLIT_DATE), test >= this
 
 # Feature windows, in trading days.
 VOL_WINDOW = 21             # one trading month of realized volatility
@@ -34,18 +39,31 @@ REGIME_FEATURES = [
     "volume_zscore",
 ]
 
+# The agent's market state is built from the SAME columns the regime model
+# clusters on. An earlier version binned only three of them while the regime was
+# derived from all five, so the regime label smuggled in two extra features and
+# the ablation flattered it. Same inputs both sides; the only difference is
+# whether the cluster label is appended.
+STATE_FEATURES = REGIME_FEATURES
+
 N_REGIMES = 3               # bullish / bearish / sideways, per the brief
+STATE_BINS = 2              # per feature; chosen on validation, see the notebook
 DBSCAN_EPS = 0.9
 DBSCAN_MIN_SAMPLES = 20
 PCA_COMPONENTS = 2
 UMAP_NEIGHBORS = 15
 UMAP_MIN_DIST = 0.1
 ANOMALY_CONTAMINATION = 0.02
+REGIME_STABILITY_SEEDS = 20      # reseeded K-means runs for the agreement check
+FORWARD_HORIZONS = (1, 5)        # trading days ahead used to validate regimes
 
 # Trading environment.
 ACTIONS = (-1, 0, 1)        # short, flat, long
 TRANSACTION_COST = 0.001    # 10 bps of notional per unit of position change
 TRADING_DAYS = 252
+# Cost levels for the sensitivity sweep: frictionless, the headline 10 bps, and
+# two levels that stand in for slippage and harder-to-borrow shorts.
+COST_LEVELS = (0.0, 0.0005, 0.001, 0.002, 0.005)
 
 # Tabular RL. The state space is discrete, so these are the classic settings:
 # a decaying epsilon explores early and exploits late, and gamma below one

@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from nvda_rl.config import SPLIT_DATE, START_DATE, TICKER
+from nvda_rl.config import SPLIT_DATE, START_DATE, TICKER, VALIDATION_DATE
 
 
 def download_data(raw_dir: str | Path, force: bool = False) -> Path:
@@ -46,25 +46,29 @@ def download_data(raw_dir: str | Path, force: bool = False) -> Path:
 
 def load_prices(raw_dir: str | Path) -> pd.DataFrame:
     """
-    Read the cached CSV into a frame indexed by date, with simple and log
-    returns attached. Log returns are used wherever returns get summed over
-    time; simple returns are what the trading environment pays out.
+    Read the cached CSV into a date-sorted frame of raw prices.
+
+    Returns are deliberately NOT computed here. They are derived in
+    `clean_prices` after the bad rows are gone, because a return computed
+    against a row that cleaning later deletes would silently survive in the
+    following row.
     """
     path = Path(raw_dir) / f"{TICKER}.csv"
     df = pd.read_csv(path, parse_dates=["Date"]).rename(columns=str.lower)
-    df = df.rename(columns={"date": "date"}).sort_values("date").reset_index(drop=True)
-
-    df["return"] = df["close"].pct_change()
-    df["log_return"] = np.log(df["close"]).diff()
-    return df
+    return df.sort_values("date").reset_index(drop=True)
 
 
 def audit_prices(df: pd.DataFrame) -> pd.DataFrame:
     """
     One-row summary of the things that silently ruin a price series: gaps,
     duplicates, missing values, and non-positive prices.
+
+    Runs on raw prices as well as cleaned ones, so the return statistics are
+    derived here rather than assumed to be present. That keeps the audit usable
+    before cleaning, which is exactly when it is most informative.
     """
     gaps = df["date"].diff().dt.days.dropna()
+    returns = df["return"] if "return" in df else df["close"].pct_change()
     summary = {
         "rows": len(df),
         "first_date": df["date"].min().date(),
@@ -74,25 +78,35 @@ def audit_prices(df: pd.DataFrame) -> pd.DataFrame:
         "missing_volume": int(df["volume"].isna().sum()),
         "non_positive_close": int((df["close"] <= 0).sum()),
         "max_gap_days": int(gaps.max()),
-        "mean_daily_return_%": round(df["return"].mean() * 100, 4),
-        "daily_vol_%": round(df["return"].std() * 100, 3),
+        "mean_daily_return_%": round(returns.mean() * 100, 4),
+        "daily_vol_%": round(returns.std() * 100, 3),
     }
     return pd.DataFrame([summary]).T.rename(columns={0: TICKER})
 
 
 def clean_prices(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Drop duplicate dates, rows without a usable close, and the first row whose
-    return is undefined by construction.
+    Clean the price sequence first, then derive returns from what survives.
+
+    The order matters. Removing a duplicate date or a non-positive close after
+    the returns are computed leaves the following row holding a return measured
+    against a bar that no longer exists. Cleaning first and differencing second
+    makes every return a difference between two rows that are both still in the
+    frame.
 
     Extreme daily moves are deliberately kept. NVDA's largest single-day jumps
     are real earnings reactions, and they are precisely the events a regime
     model exists to identify, so trimming them would delete the signal.
     """
     out = df.drop_duplicates(subset="date", keep="first")
-    out = out[out["close"] > 0]
-    out = out.dropna(subset=["close", "return"])
-    return out.reset_index(drop=True)
+    out = out[out["close"].notna() & (out["close"] > 0)]
+    out = out.sort_values("date").reset_index(drop=True)
+
+    out["return"] = out["close"].pct_change()
+    out["log_return"] = np.log(out["close"]).diff()
+
+    # The opening row has no predecessor, so its return is undefined.
+    return out.dropna(subset=["return"]).reset_index(drop=True)
 
 
 def extreme_days(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
@@ -117,3 +131,23 @@ def split_prices(df: pd.DataFrame, split_date: str = SPLIT_DATE) -> tuple[pd.Dat
     train = df[df["date"] < cut].reset_index(drop=True)
     test = df[df["date"] >= cut].reset_index(drop=True)
     return train, test
+
+
+def split_three_way(
+    df: pd.DataFrame,
+    validation_date: str = VALIDATION_DATE,
+    split_date: str = SPLIT_DATE,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Chronological train / validation / test split.
+
+    Every hyperparameter is chosen against the validation window so the test
+    window stays sealed until the single final evaluation. Without this, a
+    choice like the learning rate is effectively fitted to the test set and the
+    reported result stops being out of sample.
+    """
+    v, t = pd.Timestamp(validation_date), pd.Timestamp(split_date)
+    train = df[df["date"] < v].reset_index(drop=True)
+    validation = df[(df["date"] >= v) & (df["date"] < t)].reset_index(drop=True)
+    test = df[df["date"] >= t].reset_index(drop=True)
+    return train, validation, test

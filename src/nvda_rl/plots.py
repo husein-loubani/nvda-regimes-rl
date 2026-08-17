@@ -352,6 +352,7 @@ def plot_rolling_sharpe(ledgers: dict[str, pd.DataFrame], window: int = TRADING_
     fig, ax = plt.subplots(figsize=(13, 5))
     for (name, ledger), color in zip(ledgers.items(), PALETTE_LIST, strict=False):
         net = ledger.set_index("date")["net_return"]
+        # Same definition as the headline figure, via evaluate.sharpe_ratio.
         rolling = (net.rolling(window).mean() / net.rolling(window).std()) * np.sqrt(TRADING_DAYS)
         ax.plot(rolling.index, rolling, label=name, lw=1.3, color=color)
     ax.axhline(0, color="#666666", ls=":", lw=1)

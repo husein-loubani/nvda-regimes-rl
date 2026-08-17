@@ -109,12 +109,12 @@ class QLearningAgent(TabularAgent):
     def train(self, env, n_episodes: int = N_EPISODES) -> pd.DataFrame:
         for episode in range(n_episodes):
             epsilon = _epsilon_at(episode)
-            state = env.reset()
+            state, _ = env.reset()
             total_reward, done = 0.0, False
 
             while not done:
                 action = self.select_action(state, epsilon)
-                next_state, reward, done, _ = env.step(action)
+                next_state, reward, done, _, _ = env.step(action)
                 a_idx = self.action_index(action)
 
                 target = reward if done else reward + self.gamma * np.max(self.q[next_state])
@@ -144,12 +144,12 @@ class SarsaAgent(TabularAgent):
     def train(self, env, n_episodes: int = N_EPISODES) -> pd.DataFrame:
         for episode in range(n_episodes):
             epsilon = _epsilon_at(episode)
-            state = env.reset()
+            state, _ = env.reset()
             action = self.select_action(state, epsilon)
             total_reward, done = 0.0, False
 
             while not done:
-                next_state, reward, done, _ = env.step(action)
+                next_state, reward, done, _, _ = env.step(action)
                 a_idx = self.action_index(action)
 
                 if done:

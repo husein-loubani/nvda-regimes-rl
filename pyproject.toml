@@ -25,6 +25,7 @@ dependencies = [
     "seaborn>=0.13",
     "umap-learn>=0.5.7",
     "hmmlearn>=0.3.3",
+    "gymnasium>=1.0",
     "phik>=0.12.5",
     # UMAP reaches numba through pynndescent. Without these floors the resolver
     # is free to pick a 2021-era llvmlite that has no wheel for this Python and
@@ -41,8 +42,11 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["nvda_rl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100

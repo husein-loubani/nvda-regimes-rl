@@ -8,20 +8,39 @@ Clustering finds market regimes in NVIDIA's daily price history. A tabular RL ag
 
 ## Headline result
 
-The regime label is built from features the agent already had, yet adding it roughly **doubles** test PnL for both algorithms.
+Three things are true at once, and the project is more useful for holding all three.
+
+**The unsupervised half worked.** Three regimes, stable under reseeding (ARI 1.00) and bootstrap resampling (ARI 0.92), persistent over weeks, and predictive of forward volatility and drawdown on quantities the clustering never saw.
+
+**The RL half did not beat the benchmark.**
 
 | Policy | Test PnL | Ann. return | Sharpe | Max drawdown | Turnover / yr |
 |---|---|---|---|---|---|
-| Buy and hold | +1381% | 62.7% | 1.23 | −66.3% | 0.2 |
-| **SARSA [market + regime]** | **+1360%** | **62.3%** | **1.25** | −67.2% | 16.1 |
-| Q-learning [market + regime] | +749% | 47.1% | 0.93 | −66.7% | 26.2 |
-| SARSA [market only] | +706% | 45.8% | 0.90 | −60.0% | 13.2 |
-| Q-learning [market only] | +408% | 34.1% | 0.67 | −61.3% | 19.0 |
-| Random | −96% | −44.1% | −1.05 | −96.5% | 221.3 |
+| Buy and hold | +1414% | 63.3% | 1.22 | -66.3% | 0.2 |
+| Q-learning [market only] | +904% | 51.7% | 1.09 | -64.1% | 123.3 |
+| SARSA [market only] | +624% | 42.9% | 0.99 | -60.0% | 139.5 |
+| Q-learning [market + regime] | +348% | 31.1% | 0.79 | -79.8% | 84.7 |
+| Random | +96% | 12.9% | 0.49 | -49.2% | 221.3 |
+| SARSA [market + regime] | +26% | 4.3% | 0.32 | -68.8% | 79.6 |
 
-Sealed test window: 2021-01-04 to 2026-07-28, 1,397 trading days.
+**And the regime label made the agent worse**, despite being informative. That is the finding I would defend: an informative feature is not automatically a useful state variable. Appending the label triples the reachable state space from 96 to 288 while the training window stays the same length, and the estimation error costs more than the information repays.
 
-Two things to be clear about. Against buy-and-hold the best agent **ties** rather than wins: 1360% against 1381%, with a Sharpe gap that sits inside noise. And the test period is one huge bull run where every drawdown recovered, which flatters anything that stays long. The claim worth defending is the ablation, not the baseline race.
+Sealed test window: 2021-01-04 to 2026-07-28 (1,397 trading days).
+
+### Two corrections that reversed an earlier conclusion
+
+An earlier version reported that the regime state nearly doubled PnL and tied buy-and-hold. Both claims were artefacts.
+
+1. **A reward timing bug.** `next_return` already shifts the return forward a day, and the environment then multiplied it by the *previous* position, shifting it again. A position decided on day *t* earned the return of day *t+2*, so the agent traded on a one-day lag throughout. Every existing test shared that convention, so they all passed while the timeline was wrong. `tests/modeling/test_environment.py` now pins it with named weekdays and a hand-computed reward.
+2. **An unfair ablation.** The baseline saw three binned features while the regime was built from five, so the label smuggled in two extra inputs. Both arms now use identical features.
+
+Fix both and the advantage disappears.
+
+### What survives contact with reality
+
+The walk-forward is not flattering. The best agent is strongly positive in 2021, 2023, 2024 and 2025, then loses **55.9%** in 2022 with a Sharpe of -1.08, and its turnover more than doubles that year. Four good years carrying one very bad one is not a repeatable edge.
+
+The cost curve is worse news. At 0 bps the strategy returns +1888%, at the headline 10 bps +904%, at 20 bps +407%, and by 50 bps it is **negative**. Since 50 bps is not unreasonable for a daily-rebalanced strategy that shorts, the edge lives inside the assumption that execution is cheap. Buy-and-hold, which trades twice, barely notices the same axis.
 
 ---
 
@@ -34,21 +53,23 @@ The reward, exactly as the brief specifies:
 
 $$r_t = a_{t-1} \cdot \text{return}_t - \text{cost} \cdot |a_t - a_{t-1}|$$
 
-Yesterday's position earns today's return, so the agent cannot act on a return it has already seen. The cost scales with how far the position moves. Unit tests pin this formula with hand-computed values.
+The position chosen at the close of day *t* earns day *t+1*'s return, and the cost scales with how far the position moves. The environment implements this from the decision's point of view (`a_t * next_return_t`), which is the same sum but credits the action that actually caused the profit. Getting that indexing wrong is what produced the earlier incorrect results, so it is pinned by a test with named weekdays and a hand-computed number.
 
 ---
 
 ## The regimes
 
-Three regimes, fitted on the training window and frozen before touching test data:
+Fitted on the training window and frozen. Profiling them by *current* return is partly circular, since current return is one of the clustering inputs and the labels are then sorted by it, so the honest test is what happens **after** the label is observed:
 
-| Regime | Name | Share of days | Ann. return | Ann. vol | Hit ratio | Below 52w high |
+| Regime | Days | Forward 1d | Forward 5d | Forward 1d hit | Forward 21d vol | Forward 21d drawdown |
 |---|---|---|---|---|---|---|
-| 0 | Melt-up | 11% | +506% | 69% | 0.70 | −6% |
-| 1 | Calm advance | 62% | +42% | 26% | 0.54 | −6% |
-| 2 | Drawdown | 26% | −143% | 51% | 0.42 | −36% |
+| 0 Melt-up | 174 | +59.6 bps | +203.5 bps | 0.59 | 40.9% | -4.8% |
+| 1 Calm advance | 1372 | +13.7 bps | +80.1 bps | 0.52 | 31.9% | -4.4% |
+| 2 Drawdown | 466 | -1.4 bps | -18.2 bps | 0.48 | 45.2% | -8.5% |
 
-They persist, with diagonal transition probabilities of 0.69, 0.93, and 0.89. And they generalize: centroids fitted on 2010 to 2020 give the same ordering on 2021 to 2026 without being refitted.
+None of those columns was shown to the clustering. The regimes carry real forward information, and what they predict best is **risk**: forward drawdown roughly doubles between the calm and the stressed state, while forward direction separates much more weakly.
+
+They also persist, with diagonal transition probabilities of 0.69, 0.93 and 0.89, so yesterday's label says something about today.
 
 ---
 
@@ -59,17 +80,20 @@ They persist, with diagonal transition probabilities of 0.69, 0.93, and 0.89. An
 ├── data/raw/NVDA.csv               <- yfinance cache, keeps reruns offline
 ├── notebooks/
 │   └── nvda_regimes_rl.ipynb       <- the deliverable
-├── nvda_rl/                        <- all logic; the notebook stays thin
+├── src/nvda_rl/                    <- all logic; the notebook stays thin
 │   ├── config.py                   <- constants, seeds, palette, hyperparameters
-│   ├── dataset.py                  <- download, cache, load, audit, clean, split
-│   ├── features.py                 <- market features, train-only binning
+│   ├── dataset.py                  <- download, cache, load, audit, clean, three-way split
+│   ├── features.py                 <- market features, KBinsDiscretizer binning
 │   ├── plots.py                    <- every figure, returns a Figure
 │   └── modeling/
-│       ├── regimes.py              <- K-means, HMM, DBSCAN, Ward, PCA, anomalies
-│       ├── environment.py          <- the trading MDP and its reward
+│       ├── regimes.py              <- K-means, HMM, DBSCAN, Ward, PCA, forward validation, stability
+│       ├── environment.py          <- the trading MDP, on the Gymnasium Env contract
 │       ├── agents.py               <- Q-learning, SARSA, and baselines
-│       └── evaluate.py             <- PnL, drawdown, hit ratio, turnover, cost drag
-├── tests/                          <- 19 tests, including leakage guards
+│       └── evaluate.py             <- PnL, Sharpe, drawdown, turnover, cost sweep, walk-forward
+├── tests/                          <- 83 tests, mirroring the package
+│   ├── test_dataset.py  test_features.py  test_plots.py
+│   ├── test_leakage.py  test_pipeline.py
+│   └── modeling/  test_agents.py  test_environment.py  test_evaluate.py  test_regimes.py
 ├── references/data_dictionary.md
 ├── reports/figures/
 ├── pyproject.toml
@@ -80,13 +104,14 @@ They persist, with diagonal transition probabilities of 0.69, 0.93, and 0.89. An
 
 ## Guarding against look-ahead
 
-The dangerous failure here is not a crash. It is a backtest that looks great because the state encoded the future. Three guards, all covered by tests:
+The dangerous failure here is not a crash. It is a backtest that looks great because the state encoded the future. Four guards, all covered by tests:
 
-1. The split is chronological. Train before 2021, test after, never shuffled.
+1. The split is chronological and three-way. Train, then validation for every tuning decision, then a test window opened once.
 2. The scaler and cluster centroids are fitted on train only, then frozen, so a test-day label cannot reflect days the agent never traded.
 3. The discretization bin edges come from training quantiles, so the test period never decides what counts as high volatility.
+4. Returns are derived *after* cleaning, so a return can never be measured against a bar that cleaning later removed.
 
-`tests/test_leakage.py` asserts that centroids do not move when test data arrives and that bin edges depend only on training data.
+`tests/test_leakage.py` proves this rather than asserting it. An earlier version fitted the binner twice on the same frame, which only showed the code was deterministic. The current test runs the whole fitting workflow against two very different test sets and requires the bin edges, scaler parameters, centroids, and label ordering to come out identical.
 
 ---
 
@@ -107,7 +132,7 @@ There is also a uv path, which is what `uv.lock` pins:
 
 ```bash
 uv sync --extra dev          # builds .venv from the lockfile
-uv run pytest -q             # 19 tests
+uv run pytest -q             # 83 tests
 uv run ruff check .          # package, tests, and notebook
 ```
 
